@@ -1,6 +1,5 @@
 class request:
     def __init__(self, _str):
-        print(_str.split(b"\r\n\r\n")[0].split(b"\r\n")[0].split(b" HTTP")[0].split(b" ")[1])
         self.method = _str.split(b"\r\n\r\n")[0].split(b"\r\n")[0].split(b" HTTP")[0].split(b" ")[0].decode("utf-8")
         self.path = _str.split(b"\r\n\r\n")[0].split(b"\r\n")[0].split(b" HTTP")[0].split(b" ")[1].decode("utf-8")
         self.headers = _str.split(b"\r\n\r\n")[0].split(b"\r\n")
