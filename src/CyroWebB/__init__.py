@@ -1,18 +1,24 @@
-import os,sys,socket,multiprocessing
+import os,sys,socket,threading,multiprocessing,time,psutil
 import webob,inspect,brotli,ssl
 from parse import parse
 from typing import Callable
 from . import Response,Request
-from _thread import *
+from .render import *
 
 class Server(object):
     SOCK = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     SOCK.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     ActiveThreads = 0
+    StaticCacheAge = 3600
     endpoints = {}
 
-    def __init__(self,context) -> None:
+    def __init__(self,context,secure: None = False) -> None:
         self.context = context
+        self.brotli = False
+        if secure:
+            self.brotli = True
+            ssl.SSLContext(ssl.PROTOCOL_TLSv1).wrap_socket(self.SOCK, server_hostname=socket.gethostname())
+
 
     def create_endpoint(self, path: str) -> Callable:
         def wrapper(handler):
@@ -54,13 +60,82 @@ class Server(object):
 
             return fileType, fileType in self.noText.values()
 
-    def handle(self,client: socket.socket,addr: tuple) -> bool:
+            
+    def find_handler(self, req):
+        for path, handler in self.endpoints.items():
+            parseOut = parse(path, req.path)
+            if parseOut is not None:
+                print(handler.__name__)
+                return handler, parseOut.named
+
+        return None, None
+
+    def run(self,port) -> None:
+        if 'PROD' not in globals():
+            self.SOCK.bind((socket.gethostname(), port))
+            self.SOCK.listen(5)
+            CPUCount = psutil.cpu_count(logical=False)
+            processes = []
+            processes.append(Process())
+            print("http://" + socket.gethostname(), port,sep=":")
+            self.MaxThreads = psutil.cpu_count()
+            while True:
+                client = self.SOCK.accept()
+                for process in processes:
+                    if process == processes[-1]:
+                        if len(process.workers) == self.MaxThreads:
+                            if CPUCount == len(processes):
+                                print("hit processer count")
+                            else:
+                                processes.append(Process())
+                                processes[-1].start()
+                                print("New Process!!!")
+                        print(process.workers,len(processes[-1].workers),self.MaxThreads,len(processes[-1].workers) == self.MaxThreads)
+                        worker = Worker(self,*client,len(processes),len(processes[-1].workers))
+                        processes[-1].workers.append(worker)
+                        processes[-1].workers[-1].start()
+                    else:
+                        pass
+                    print(process.workers,process.workers == [worker for worker in process.workers if not worker.is_alive()])
+                    process.workers = [worker for worker in process.workers if not worker.is_alive()]
+
+            # while True:
+            #     client = self.SOCK.accept()
+            #     mp = multiprocessing.Process(target=self.handle, args=(*client, ))
+            #     processL.append(mp)
+            #     processL[-1].start()
+            #     processL[-1].join()
+        else:
+            print("Ignoring Run Command; Global Variable Name PROD Present.")
+
+class Process(multiprocessing.Process):
+    def __init__(self):
+        multiprocessing.Process.__init__(self)
+        self.workers = []
+        self.prevWorkerLen = 0
+
+    def run(self):
+        while True:
+            if not self.prevWorkerLen == len(self.workers):
+                print("New Worker Detected")
+                self.workers[-1].start()
+        self.workers[-1].start()
+
+class Worker(threading.Thread):
+    def __init__(self, server: Server, client: socket.socket, addr: tuple, processorID: int, threadID: int) -> None:
+        threading.Thread.__init__(self)
+        self.server = server
+        self.client = client
+        self.socket = socket
+        self.addr = addr
+
+    def run(self):
         try:
             resp = Response.response()
-            recv = client.recv(2 ** 15)
+            recv = self.client.recv(2 ** 15)
             req = Request.request(recv)
-            handler = self.find_handler(req)
-            handler, kwargs = self.find_handler(req)
+            handler = self.server.find_handler(req)
+            handler, kwargs = self.server.find_handler(req)
             compress = True
             if handler is not None:
                 if (inspect.isclass(handler)):
@@ -75,57 +150,36 @@ class Server(object):
                         resp = Response.response()
                         resp.status_code = 405
                         resp.text = "405 Method Not Allowed"
-                        client.send(resp.compile())
+                    self.client.send(resp.compile())
                 else:            
                     try:
                         handler(req, resp, **kwargs)
                     except:
                         handler(resp, **kwargs)
                 if compress:
-                    if self.brotli:
+                    if self.server.brotli:
                         resp.body = brotli.compress(resp.text.encode())
                         resp.headers[b"Content-Encoding"] = b"br"
                     else:
                         pass
             else:
                 try:
-                    FileType, noText = self.getFileType(req.path)
+                    FileType, noText = self.server.getFileType(req.path)
                     resp.headers[b"Content-Type"] = FileType.encode()
                     if (noText):
-                        resp.body = open(os.path.dirname(os.path.abspath(self.context)) + "/static" + req.path, "rb").read()
+                        resp.body = open((os.path.join(os.path.dirname(os.path.abspath(self.server.context)),"static")) + req.path, "rb").read()
                     else:
-                        resp.text = open(os.path.dirname(os.path.abspath(self.context)) + "/static" + req.path).read()
-
-                    resp.headers[b"cache_control"] = ("max-age=" + str(self.staticCache)).encode()
+                        resp.text = open((os.path.join(os.path.dirname(os.path.abspath(self.server.context)),"static")) + req.path).read()
+                    resp.headers[b"Cache-Control"] = ("max-age=" + str(self.server.StaticCacheAge)).encode()
                 except Exception as e:
                     resp = Response.response()
-                    resp.text = "404"
-                    client.send(resp.compile())
-            client.send(resp.compile())
+                    self.client.send(resp.compile())
+            self.client.send(resp.compile())
             return True
         except Exception as e:
+            print("********************")
             print(e)
             resp.text = "Well My Work Was Not Clean Enough, but...<br><b>Thats A Server Problem</b>"
             resp.status_code = 500
-            client.send(resp.compile())
+            self.client.send(resp.compile())
             return False
-            
-    def find_handler(self, req):
-        for path, handler in self.endpoints.items():
-            parseOut = parse(path, req.path)
-            if parseOut is not None:
-                return handler, parseOut.named
-
-        return None, None
-
-    def run(self,port) -> None:
-        self.SOCK.bind((socket.gethostname(), port))
-        self.SOCK.listen(5)
-        processL = []
-        print("http://"+ socket.gethostname(), port,sep=":")
-        while True:
-            client = self.SOCK.accept()
-            mp = multiprocessing.Process(target=self.handle, args=(*client, ))
-            processL.append(mp)
-            processL[-1].start()
-            processL[-1].join()
