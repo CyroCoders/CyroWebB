@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setuptools.setup(
     name="CyroWebB",
-    version="0.0.1",
+    version="0.0.2",
     author="CyroCoders",
     author_email="pypi@cyrocoders.ml",
     description="Backend Framework To Go Together With CyroWebF Frontend Framework.",
@@ -23,4 +23,11 @@ setuptools.setup(
     package_dir={"": "src"},
     packages=setuptools.find_packages(where="src"),
     python_requires=">=3",
+    install_requires=[
+        'Jinja2==2.11.2',
+        'Brotli==1.0.9',
+        'WebOb==1.8.7',
+        'parse==1.19.0',
+        'psutil==5.8.0'
+    ]
 )
