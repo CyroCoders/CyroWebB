@@ -1,4 +1,4 @@
-import os,sys,socket,threading,multiprocessing,time,psutil
+import os,sys,socket,threading,multiprocessing,time,psutil,urllib.request
 import webob,inspect,brotli,ssl
 from parse import parse
 from typing import Callable
@@ -98,6 +98,19 @@ class Server(object):
                         pass
                     print(process.workers,process.workers == [worker for worker in process.workers if not worker.is_alive()])
                     process.workers = [worker for worker in process.workers if not worker.is_alive()]
+
+    def get_external(self, resp, url, mimetype=None):
+        FileType, noText = self.getFileType(uri)
+        if mimetype == None:
+            resp.headers[b"Content-Type"] = FileType
+
+        if (noText):
+            resp.body = urllib.request.urlopen(url).read()
+        else:
+            try:
+                resp.text = urllib.request.urlopen(url).read()
+            except:
+                resp.text = urllib.request.urlopen(url).read().decode()
 
             # while True:
             #     client = self.SOCK.accept()
