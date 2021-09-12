@@ -103,7 +103,7 @@ class Server(object):
     def get_external(self, resp, url, mimetype=None):
         FileType, noText = self.getFileType(url)
         if mimetype == None:
-            resp.headers[b"Content-Type"] = FileType
+            resp.headers[b"Content-Type"] = FileType.encode()
 
         if (noText):
             resp.body = urllib.request.urlopen(url).read()
