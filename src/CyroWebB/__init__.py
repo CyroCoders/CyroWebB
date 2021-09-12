@@ -101,7 +101,7 @@ class Server(object):
                     process.workers = [worker for worker in process.workers if not worker.is_alive()]
 
     def get_external(self, resp, url, mimetype=None):
-        FileType, noText = self.getFileType(uri)
+        FileType, noText = self.getFileType(url)
         if mimetype == None:
             resp.headers[b"Content-Type"] = FileType
 
