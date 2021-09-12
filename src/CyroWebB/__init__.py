@@ -119,8 +119,6 @@ class Server(object):
             #     processL.append(mp)
             #     processL[-1].start()
             #     processL[-1].join()
-        else:
-            print("Ignoring Run Command; Global Variable Name PROD Present.")
 
 class Process(multiprocessing.Process):
     def __init__(self):
