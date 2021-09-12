@@ -109,9 +109,9 @@ class Server(object):
             resp.body = urllib.request.urlopen(url).read()
         else:
             try:
-                resp.text = urllib.request.urlopen(url).read()
-            except:
                 resp.text = urllib.request.urlopen(url).read().decode()
+            except:
+                resp.body = urllib.request.urlopen(url).read()
 
             # while True:
             #     client = self.SOCK.accept()
