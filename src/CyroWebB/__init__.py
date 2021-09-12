@@ -38,7 +38,7 @@ class Server(object):
                 ".htm": "text/html",
                 ".ico": "image/vnd.microsoft.icon",
                 ".js": "text/javascript",
-                ".svg": "image/svg",
+                ".svg": "image/svg+xml",
                 ".xml": "text/xml",
                 ".jp2": "image/x-jp2",
                 ".jpg": "image/jpeg",
