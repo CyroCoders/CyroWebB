@@ -13,12 +13,12 @@ class Server(object):
     StaticCacheAge = 3600
     endpoints = {}
 
-    def __init__(self,context,secure: None = False) -> None:
+    def __init__(self,context,secure=False) -> None:
         self.context = context
         self.brotli = False
+        self.secure = secure
         if secure:
             self.brotli = True
-            ssl.SSLContext(ssl.PROTOCOL_TLSv1).wrap_socket(self.SOCK, server_hostname=socket.gethostname())
 
 
     def create_endpoint(self, path: str) -> Callable:
@@ -71,34 +71,54 @@ class Server(object):
 
         return None, None
 
-    def run(self,port) -> None:
-        if 'PROD' not in globals():
-            self.SOCK.bind((socket.gethostname(), port))
-            self.SOCK.listen(5)
+    def handle_socket(self,_socket) -> None:
+            _socket.listen(5)
             CPUCount = psutil.cpu_count(logical=False)
             processes = []
             processes.append(Process())
-            print("http://" + socket.gethostname(), port,sep=":")
             self.MaxThreads = psutil.cpu_count()
             while True:
-                client = self.SOCK.accept()
-                for process in processes:
-                    if process == processes[-1]:
-                        if len(process.workers) == self.MaxThreads:
-                            if CPUCount == len(processes):
-                                print("hit processer count")
-                            else:
-                                processes.append(Process())
-                                processes[-1].start()
-                                print("New Process!!!")
-                        print(process.workers,len(processes[-1].workers),self.MaxThreads,len(processes[-1].workers) == self.MaxThreads)
-                        worker = Worker(self,*client,len(processes),len(processes[-1].workers))
-                        processes[-1].workers.append(worker)
-                        processes[-1].workers[-1].start()
-                    else:
-                        pass
-                    print(process.workers,process.workers == [worker for worker in process.workers if not worker.is_alive()])
-                    process.workers = [worker for worker in process.workers if not worker.is_alive()]
+                try:
+                    client = _socket.accept()
+                    for process in processes:
+                        if process == processes[-1]:
+                            if len(process.workers) == self.MaxThreads:
+                                if CPUCount == len(processes):
+                                    print("hit processer count")
+                                else:
+                                    processes.append(Process())
+                                    processes[-1].start()
+                            #         print("New Process!!!")
+                            # print(process.workers,len(processes[-1].workers),self.MaxThreads,len(processes[-1].workers) == self.MaxThreads)
+                            worker = Worker(self,*client,len(processes),len(processes[-1].workers))
+                            processes[-1].workers.append(worker)
+                            processes[-1].workers[-1].start()
+                        else:
+                            pass
+                        # print(process.workers,process.workers == [worker for worker in process.workers if not worker.is_alive()])
+                        process.workers = [worker for worker in process.workers if not worker.is_alive()]
+                except Exception as e:
+                    print(e)
+                    continue
+
+    def run(self,port) -> None:
+        if 'PROD' not in globals():
+            self.SOCK.bind((socket.gethostname(), port))
+            if self.secure:
+                print("https://" + socket.gethostname(), port,sep=":")
+                self.SOCK_ssl = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.SOCK_ssl.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self.SOCK_ssl.bind((socket.gethostname(), port))
+                self.ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
+                self.ssl_context.load_cert_chain(certfile=os.path.join(os.path.dirname(os.path.abspath(self.context)),"certificates/cert.crt"), keyfile=os.path.join(os.path.dirname(os.path.abspath(self.context)),"certificates/cert.key"))
+                self.SOCK_ssl = self.ssl_context.wrap_socket(self.SOCK_ssl)
+                self.handle_socket(self.SOCK_ssl)
+            else:
+                print("http://" + socket.gethostname(), port,sep=":")
+                self.SOCK = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.SOCK.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self.SOCK.bind((socket.gethostname(), port))
+                self.handle_socket(self.SOCK)
 
     def get_external(self, resp, url, mimetype=None):
         FileType, noText = self.getFileType(url)
@@ -129,7 +149,6 @@ class Process(multiprocessing.Process):
     def run(self):
         while True:
             if not self.prevWorkerLen == len(self.workers):
-                print("New Worker Detected")
                 self.workers[-1].start()
         self.workers[-1].start()
 
