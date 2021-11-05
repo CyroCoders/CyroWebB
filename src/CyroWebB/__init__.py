@@ -1,4 +1,5 @@
 import os,sys,socket,threading,multiprocessing,time,psutil,urllib.request
+from traceback import print_tb
 import webob,inspect,brotli,ssl
 from parse import parse
 from typing import Callable
@@ -27,8 +28,7 @@ class Server(object):
                 self.endpoints[path] = handler
                 return handler
             else:
-                raise AssertionError(self.error["urlcatcherexists"])
-                return self.error["urlcatcherexists"]
+                raise AssertionError(f"Endpoint {path}:{handler} Already Exists!")#self.error["urlcatcherexists"])
         return wrapper
 
     def getFileType(self, f: str) -> list:
@@ -66,58 +66,48 @@ class Server(object):
         for path, handler in self.endpoints.items():
             parseOut = parse(path, req.path)
             if parseOut is not None:
-                print(handler.__name__)
                 return handler, parseOut.named
 
         return None, None
 
     def handle_socket(self,_socket) -> None:
+            workerQueue = multiprocessing.Manager().Queue(10000)
             _socket.listen(5)
             CPUCount = psutil.cpu_count(logical=False)
             processes = []
-            processes.append(Process())
+            for _ in range(CPUCount):
+                processes.append(Process(workerQueue))
+            for process in processes:
+                process.start()
             self.MaxThreads = psutil.cpu_count()
             while True:
                 try:
                     client = _socket.accept()
-                    for process in processes:
-                        if process == processes[-1]:
-                            if len(process.workers) == self.MaxThreads:
-                                if CPUCount == len(processes):
-                                    print("hit processer count")
-                                else:
-                                    processes.append(Process())
-                                    processes[-1].start()
-                            #         print("New Process!!!")
-                            # print(process.workers,len(processes[-1].workers),self.MaxThreads,len(processes[-1].workers) == self.MaxThreads)
-                            worker = Worker(self,*client,len(processes),len(processes[-1].workers))
-                            processes[-1].workers.append(worker)
-                            processes[-1].workers[-1].start()
-                        else:
-                            pass
-                        # print(process.workers,process.workers == [worker for worker in process.workers if not worker.is_alive()])
-                        process.workers = [worker for worker in process.workers if not worker.is_alive()]
+                    workerQueue.put((self,*client))
+                    #processes[-1].workers = [worker for worker in processes[-1].workers if not worker.is_alive()]
                 except Exception as e:
                     print(e)
+                    for process in processes:
+                        process.join()
                     continue
 
-    def run(self,port) -> None:
+    def run(self,host) -> None:
         if 'PROD' not in globals():
-            self.SOCK.bind((socket.gethostname(), port))
+            self.SOCK.bind((host[0] if host[0] != "" else socket.gethostname(), host[1]))
             if self.secure:
-                print("https://" + socket.gethostname(), port,sep=":")
+                print("https://" + host[0] if host[0] != "" else socket.gethostname(), host[1],sep=":")
                 self.SOCK_ssl = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.SOCK_ssl.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                self.SOCK_ssl.bind((socket.gethostname(), port))
+                self.SOCK_ssl.bind((host[0] if host[0] != "" else socket.gethostname(), host[1]))
                 self.ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
                 self.ssl_context.load_cert_chain(certfile=os.path.join(os.path.dirname(os.path.abspath(self.context)),"certificates/cert.crt"), keyfile=os.path.join(os.path.dirname(os.path.abspath(self.context)),"certificates/cert.key"))
                 self.SOCK_ssl = self.ssl_context.wrap_socket(self.SOCK_ssl)
                 self.handle_socket(self.SOCK_ssl)
             else:
-                print("http://" + socket.gethostname(), port,sep=":")
+                print("http://" + host[0] if host[0] != "" else socket.gethostname(), host[1],sep=":")
                 self.SOCK = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.SOCK.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                self.SOCK.bind((socket.gethostname(), port))
+                self.SOCK.bind((host[0] if host[0] != "" else socket.gethostname(), host[1]))
                 self.handle_socket(self.SOCK)
 
     def get_external(self, resp, url, mimetype=None):
@@ -133,40 +123,39 @@ class Server(object):
             except:
                 resp.body = urllib.request.urlopen(url).read()
 
-            # while True:
-            #     client = self.SOCK.accept()
-            #     mp = multiprocessing.Process(target=self.handle, args=(*client, ))
-            #     processL.append(mp)
-            #     processL[-1].start()
-            #     processL[-1].join()
-
 class Process(multiprocessing.Process):
-    def __init__(self):
+    def __init__(self, taskQueue):
         multiprocessing.Process.__init__(self)
-        self.workers = []
-        self.prevWorkerLen = 0
+        self.taskQueue = taskQueue
 
     def run(self):
-        while True:
-            if not self.prevWorkerLen == len(self.workers):
-                self.workers[-1].start()
-        self.workers[-1].start()
+        MaxThreads = psutil.cpu_count()
+        workers = []
+        try:
+            print(len(workers) < MaxThreads)
+            while True:
+                workers = [worker for worker in workers if worker.is_alive()]
+                while len(workers) < MaxThreads:
+                    print(workers)
+                    workers.append(Worker(self.taskQueue))
+                    workers[-1].start()
+        except:
+            for worker in workers:
+                worker.join()
 
 class Worker(threading.Thread):
-    def __init__(self, server: Server, client: socket.socket, addr: tuple, processorID: int, threadID: int) -> None:
+    def __init__(self, taskQueue) -> None:
         threading.Thread.__init__(self)
-        self.server = server
-        self.client = client
-        self.socket = socket
-        self.addr = addr
+        self.taskQueue = taskQueue
 
     def run(self):
         try:
+            task = self.taskQueue.get()
             resp = Response.response()
-            recv = self.client.recv(2 ** 15)
+            recv = task[1].recv(2 ** 10)
             req = Request.request(recv)
-            handler = self.server.find_handler(req)
-            handler, kwargs = self.server.find_handler(req)
+            handler, kwargs = task[0].find_handler(req)
+            print(req.path, handler.__name__ if handler != None else ";", sep=": ")
             compress = True
             if handler is not None:
                 if (inspect.isclass(handler)):
@@ -181,36 +170,38 @@ class Worker(threading.Thread):
                         resp = Response.response()
                         resp.status_code = 405
                         resp.text = "405 Method Not Allowed"
-                    self.client.send(resp.compile())
+                    task[1].send(resp.compile())
                 else:            
                     try:
                         handler(req, resp, **kwargs)
                     except:
                         handler(resp, **kwargs)
                 if compress:
-                    if self.server.brotli:
+                    if task[0].brotli:
                         resp.body = brotli.compress(resp.text.encode())
                         resp.headers[b"Content-Encoding"] = b"br"
                     else:
                         pass
             else:
                 try:
-                    FileType, noText = self.server.getFileType(req.path)
+                    FileType, noText = task[0].getFileType(req.path)
                     resp.headers[b"Content-Type"] = FileType.encode()
                     if (noText):
-                        resp.body = open((os.path.join(os.path.dirname(os.path.abspath(self.server.context)),"static")) + req.path, "rb").read()
+                        resp.body = open((os.path.join(os.path.dirname(os.path.abspath(task[0].context)),"static")) + req.path, "rb").read()
                     else:
-                        resp.text = open((os.path.join(os.path.dirname(os.path.abspath(self.server.context)),"static")) + req.path).read()
-                    resp.headers[b"Cache-Control"] = ("max-age=" + str(self.server.StaticCacheAge)).encode()
+                        resp.text = open((os.path.join(os.path.dirname(os.path.abspath(task[0].context)),"static")) + req.path).read()
+                    resp.headers[b"Cache-Control"] = ("max-age=" + str(task[0].StaticCacheAge)).encode()
                 except Exception as e:
                     resp = Response.response()
-                    self.client.send(resp.compile())
-            self.client.send(resp.compile())
+                    task[1].send(resp.compile())
+            task[1].send(resp.compile())
             return True
         except Exception as e:
             print("********************")
-            print(e)
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            print(exc_type, fname, exc_tb.tb_lineno)
             resp.text = "Well My Work Was Not Clean Enough, but...<br><b>Thats A Server Problem</b>"
             resp.status_code = 500
-            self.client.send(resp.compile())
+            task[1].send(resp.compile())
             return False
