@@ -13,6 +13,7 @@ class Server(object):
     ActiveThreads = 0
     StaticCacheAge = 3600
     endpoints = {}
+    plugins = []
 
     def __init__(self,context,secure=False) -> None:
         self.context = context
@@ -122,6 +123,9 @@ class Server(object):
                 resp.text = urllib.request.urlopen(url).read().decode()
             except:
                 resp.body = urllib.request.urlopen(url).read()
+        
+    def use_plugin(self,plugin):
+        self.plugins.append(plugin(self))
 
 class Process(multiprocessing.Process):
     def __init__(self, taskQueue):
