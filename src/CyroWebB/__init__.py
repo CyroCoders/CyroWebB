@@ -1,6 +1,5 @@
-import os,sys,socket,threading,multiprocessing,time,psutil,urllib.request
-from traceback import print_tb
-import webob,inspect,brotli,ssl
+import os,sys,socket,threading,multiprocessing,psutil,urllib.request
+import inspect,brotli,ssl
 from parse import parse
 from typing import Callable
 from . import Response,Request
