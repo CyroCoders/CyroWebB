@@ -1,3 +1,4 @@
+import select
 import os,sys,socket,threading,multiprocessing,psutil,urllib.request
 import inspect,brotli,ssl
 from parse import parse
@@ -13,13 +14,16 @@ class Server(object):
     StaticCacheAge = 3600
     endpoints = {}
     plugins = []
+    processes = []
 
-    def __init__(self,context,secure=False) -> None:
+    def __init__(self,context,secure=False,production=False) -> None:
         self.context = context
         self.brotli = False
         self.secure = secure
         if secure:
             self.brotli = True
+        self.production = production
+        self.maxThreads = psutil.cpu_count() if production else 2
 
 
     def create_endpoint(self, path: str) -> Callable:
@@ -70,30 +74,38 @@ class Server(object):
 
         return None, None
 
-    def handle_socket(self,_socket) -> None:
-            workerQueue = multiprocessing.Manager().Queue(10000)
-            _socket.listen(5)
-            CPUCount = psutil.cpu_count(logical=False)
-            processes = []
+    def handle_socket(self, _sockets) -> None:
+            CPUCount = psutil.cpu_count(logical=False) if self.production else 1
+            self.workerQueue = multiprocessing.Manager().Queue(10000)
+            self.messageQueue = multiprocessing.Manager().Queue(self.maxThreads*2)
             for _ in range(CPUCount):
-                processes.append(Process(workerQueue))
-            for process in processes:
+                self.processes.append(Process(self,self.workerQueue,self.messageQueue))
+            for process in self.processes:
                 process.start()
-            self.MaxThreads = psutil.cpu_count()
+            print("Server Ready")
             while True:
+                socket_listener = select.select(_sockets, [], [], 0)[0]
                 try:
-                    client = _socket.accept()
-                    workerQueue.put((self,*client))
+                    if self.messageQueue.empty():
+                        for sock in socket_listener:
+                            if sock in _sockets:
+                                client = sock.accept()
+                                self.workerQueue.put((self,*client))
+                    else:
+                        message = self.messageQueue.get()
+                        if message == "ServerShutdown":
+                            self.kill()
                     #processes[-1].workers = [worker for worker in processes[-1].workers if not worker.is_alive()]
                 except Exception as e:
-                    print(e)
-                    for process in processes:
+                    for process in self.processes:
                         process.join()
+                    print(e)
                     continue
 
     def run(self,host) -> None:
         if 'PROD' not in globals():
             self.SOCK.bind((host[0] if host[0] != "" else socket.gethostname(), host[1]))
+            sockets = []
             if self.secure:
                 print("https://" + host[0] if host[0] != "" else socket.gethostname(), host[1],sep=":")
                 self.SOCK_ssl = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -102,13 +114,27 @@ class Server(object):
                 self.ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
                 self.ssl_context.load_cert_chain(certfile=os.path.join(os.path.dirname(os.path.abspath(self.context)),"certificates/cert.crt"), keyfile=os.path.join(os.path.dirname(os.path.abspath(self.context)),"certificates/cert.key"))
                 self.SOCK_ssl = self.ssl_context.wrap_socket(self.SOCK_ssl)
-                self.handle_socket(self.SOCK_ssl)
-            else:
-                print("http://" + host[0] if host[0] != "" else socket.gethostname(), host[1],sep=":")
-                self.SOCK = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.SOCK.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                self.SOCK.bind((host[0] if host[0] != "" else socket.gethostname(), host[1]))
-                self.handle_socket(self.SOCK)
+                self.SOCK_ssl.listen(5)
+                sockets.append(self.SOCK_ssl)
+            print("http://" + host[0] if host[0] != "" else socket.gethostname(), host[1],sep=":")
+            self.SOCK = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.SOCK.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.SOCK.bind((host[0] if host[0] != "" else socket.gethostname(), host[1]))
+            self.SOCK.listen(5)
+            sockets.append(self.SOCK)
+
+            self.handle_socket(sockets)
+
+    def kill(self) -> None:
+        self.workerQueue.put("ServerShutdown")
+        for process in self.processes:
+            process.terminate()
+            process.join()
+        self.SOCK.close()
+        if self.secure:
+            self.SOCK_ssl.close()
+        print("Server Shutdown")
+        quit()
 
     def get_external(self, resp, url, mimetype=None):
         FileType, noText = self.getFileType(url)
@@ -120,44 +146,51 @@ class Server(object):
         else:
             try:
                 resp.text = urllib.request.urlopen(url).read().decode()
-            except:
+            except AttributeError:
                 resp.body = urllib.request.urlopen(url).read()
         
     def use_plugin(self,plugin):
         self.plugins.append(plugin(self))
 
 class Process(multiprocessing.Process):
-    def __init__(self, taskQueue):
+    def __init__(self, server, taskQueue, messageQueue):
         multiprocessing.Process.__init__(self)
+        self.server = server
         self.taskQueue = taskQueue
+        self.messageQueue = messageQueue
 
     def run(self):
-        MaxThreads = psutil.cpu_count()
         workers = []
-        try:
-            print(len(workers) < MaxThreads)
-            while True:
+        kill = False
+        while True:
+            if kill:
+                ServerShutdown(self.messageQueue, KeyboardInterrupt)
+            try:
                 workers = [worker for worker in workers if worker.is_alive()]
-                while len(workers) < MaxThreads:
-                    print(workers)
-                    workers.append(Worker(self.taskQueue))
+                if len(workers) < self.server.maxThreads and self.taskQueue.qsize() > len(workers):
+                    task = self.taskQueue.get()
+                    if task == "ServerShutdown":
+                        quit()
+                    print(task)
+                    workers.append(Worker(task))
                     workers[-1].start()
-        except:
-            for worker in workers:
-                worker.join()
+            except KeyboardInterrupt as e:
+                for worker in workers:
+                    worker.join()
+                kill = True
 
 class Worker(threading.Thread):
-    def __init__(self, taskQueue) -> None:
+    def __init__(self, task) -> None:
         threading.Thread.__init__(self)
-        self.taskQueue = taskQueue
+        self.task = task
 
     def run(self):
         try:
-            task = self.taskQueue.get()
+            task = self.task
             resp = Response.response()
-            recv = task[1].recv(2 ** 10)
+            recv = self.task[1].recv(2 ** 10)
             req = Request.request(recv)
-            handler, kwargs = task[0].find_handler(req)
+            handler, kwargs = self.task[0].find_handler(req)
             print(req.path, handler.__name__ if handler != None else ";", sep=": ")
             compress = True
             if handler is not None:
@@ -167,17 +200,17 @@ class Worker(threading.Thread):
                         #if len(inspect.getfullargspec(handler).args)
                         try:
                             handler(req, resp, **kwargs)
-                        except:
+                        except TypeError:
                             handler(resp, **kwargs)
                     else:
                         resp = Response.response()
                         resp.status_code = 405
                         resp.text = "405 Method Not Allowed"
-                    task[1].send(resp.compile())
+                    self.task[1].send(resp.compile())
                 else:            
                     try:
                         handler(req, resp, **kwargs)
-                    except:
+                    except TypeError:
                         handler(resp, **kwargs)
                 if compress:
                     if task[0].brotli:
@@ -194,13 +227,14 @@ class Worker(threading.Thread):
                     else:
                         resp.text = open((os.path.join(os.path.dirname(os.path.abspath(task[0].context)),"static")) + req.path).read()
                     resp.headers[b"Cache-Control"] = ("max-age=" + str(task[0].StaticCacheAge)).encode()
-                except Exception as e:
+                except FileNotFoundError:
                     resp = Response.response()
                     task[1].send(resp.compile())
             task[1].send(resp.compile())
             return True
         except Exception as e:
             print("********************")
+            print(type(e))
             exc_type, exc_obj, exc_tb = sys.exc_info()
             fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
             print(exc_type, fname, exc_tb.tb_lineno)
@@ -208,3 +242,11 @@ class Worker(threading.Thread):
             resp.status_code = 500
             task[1].send(resp.compile())
             return False
+
+class ServerShutdown():
+    def __init__(self, messageQueue, value):
+        self.value = value
+        messageQueue.put("ServerShutdown")
+    
+    def __str__(self):
+        return "Server Shutdown: " + self.value

@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setuptools.setup(
     name="CyroWebB",
-    version="0.0.5",
+    version="0.0.6",
     author="CyroCoders",
     author_email="pypi@cyrocoders.ml",
     description="Backend Framework To Go Together With CyroWebF Frontend Framework.",
