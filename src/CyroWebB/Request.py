@@ -10,15 +10,37 @@ class request:
             else:
                 self.proto = header
         self.headers = headerL
-        if(len(_str.split(b"\r\n\r\n")) == 2):
+        self.cookies = {}
+        if b'Cookie' in self.headers:
+            for cookie in self.headers[b'Cookie'].split(b";"):
+                if cookie == "":
+                    continue
+                self.cookies[cookie.split(b"=")[0]] = cookie.split(b"=")[1]
+        if(len(_str.split(b"\r\n\r\n")) == 2 and not _str.split(b"\r\n\r\n")[1] == b""):
             self.body = _str.split(b"\r\n\r\n")[1]
             self.headers[b"Content-Length"] = str(len(self.body)).encode()
+            for post_data in self.body.split('\n').split(b"&"):
+                if post_data == "":
+                    continue
+                self.data["POST"][post_data.split(b"=")[0]] = cookie.split(b"=")[1]
         else:
             self.body = None
 
     def compile(self):
         rv = b""
         rv += self.proto + b"\r\n"
+        headers = {}
+        for key in self.headers.keys():
+            try:
+                headers[key] = self.headers[key].encode()
+            except:
+                headers[key] = self.headers[key]
+            try:
+                headers[key.encode()] = self.headers[key]
+                del headers[key]
+            except:
+                headers[key] = self.headers[key]
+        self.headers = headers
         for key in self.headers.keys():
             rv += key
             rv += b": "
