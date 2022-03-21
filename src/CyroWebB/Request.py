@@ -16,6 +16,7 @@ class request:
                 if cookie == "":
                     continue
                 self.cookies[cookie.split(b"=")[0]] = cookie.split(b"=")[1]
+        self.data = {}
         if(len(_str.split(b"\r\n\r\n")) == 2 and not _str.split(b"\r\n\r\n")[1] == b""):
             self.body = _str.split(b"\r\n\r\n")[1]
             self.headers[b"Content-Length"] = str(len(self.body)).encode()
@@ -28,10 +29,9 @@ class request:
             self.path = self.path.split('?')[0]
             if '&' in self.get_string:
                 self.get_string = self.get_string.split('&')
-            else
+            else:
                 self.get_string = [self.get_string]
-            self.get_data = {k: v for k, v in (x.split('=') for x in self.get_string)}
-                self.data["GET"] = self.get_data
+            self.data["GET"] = {k: v for k, v in (x.split('=') for x in self.get_string)}
         else:
             self.body = None
 
