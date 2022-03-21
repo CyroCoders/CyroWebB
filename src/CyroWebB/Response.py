@@ -12,6 +12,18 @@ class response:
         else: self.headers[b"Content-Length"] = str(len(self.body)).encode("utf-8")
         rv = b""
         rv += self.proto + b" " + str(self.status_code).encode("utf-8") + b"\r\n"
+        headers = {}
+        for key in self.headers.keys():
+            try:
+                headers[key] = self.headers[key].encode()
+            except:
+                headers[key] = self.headers[key]
+            try:
+                headers[key.encode()] = self.headers[key]
+                del headers[key]
+            except:
+                headers[key] = self.headers[key]
+        self.headers = headers
         for key in self.headers.keys():
             rv += key
             rv += b": "
