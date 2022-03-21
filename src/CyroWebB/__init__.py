@@ -54,7 +54,7 @@ class Server(object):
                 ".webp": "image/webp",
             }
             self.noText = {
-                ".ico": "image/ico",
+                ".ico": "image/vnd.microsoft.icon",
                 ".jp2": "image/x-jp2",
                 ".jpg": "image/jpg",
                 ".jpeg": "image/jpeg",
@@ -222,10 +222,7 @@ class Worker(threading.Thread):
                 try:
                     FileType, noText = task[0].getFileType(req.path)
                     resp.headers[b"Content-Type"] = FileType.encode()
-                    if (noText):
-                        resp.body = open((os.path.join(os.path.dirname(os.path.abspath(task[0].context)),"static")) + req.path, "rb").read()
-                    else:
-                        resp.text = open((os.path.join(os.path.dirname(os.path.abspath(task[0].context)),"static")) + req.path).read()
+                    resp.body = open((os.path.join(os.path.dirname(os.path.abspath(task[0].context)),"static")) + req.path, "rb").read()
                     resp.headers[b"Cache-Control"] = ("max-age=" + str(task[0].StaticCacheAge)).encode()
                 except FileNotFoundError:
                     resp = Response.response()
